@@ -1,0 +1,47 @@
+; driver.inf — установка RecoilDriver как kernel service
+; Мимикрирует под HID upper filter (стандартный класс Windows)
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = HIDClass
+ClassGuid   = {745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+Provider    = %ManufacturerName%
+DriverVer   = 01/20/2024,6.3.9600.1
+
+[DestinationDirs]
+DefaultDestDir  = 12     ; %windir%\System32\drivers
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+recoil.sys = 1,,
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceDesc% = Install_Section, HID\VID_046D&PID_C077
+
+[Install_Section.NT]
+CopyFiles = CopyDriverFiles
+
+[Install_Section.NT.Services]
+AddService = RecoilDrv, 0x00000002, Service_Inst
+
+[CopyDriverFiles]
+recoil.sys
+
+[Service_Inst]
+DisplayName    = %ServiceName%
+ServiceType    = 1     ; SERVICE_KERNEL_DRIVER
+StartType      = 3     ; SERVICE_DEMAND_START
+ErrorControl   = 1     ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\recoil.sys
+LoadOrderGroup = Pointer Class
+
+[Strings]
+ManufacturerName = "Microsoft"
+DiskName         = "HID Driver Disk"
+DeviceDesc       = "HID-совместимая мышь"
+ServiceName      = "HID Upper Filter Service"

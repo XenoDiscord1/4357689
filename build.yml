@@ -1,0 +1,126 @@
+name: Build RecoilComp
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ── USERMODE ──────────────────────────────────────────────────────────────
+  build-usermode:
+    name: Usermode (CMake)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        working-directory: usermode
+        run: cmake -B build
+
+      - name: Build
+        working-directory: usermode
+        run: cmake --build build --config Release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecoilComp-usermode
+          path: usermode/build/Release/RecoilComp.exe
+
+  # ── DRIVER ────────────────────────────────────────────────────────────────
+  build-driver:
+    name: Kernel Driver (WDK + MSBuild)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # MSBuild + VS2022 native tools. WDK integrates through VS.
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # Install the full WDK. This is the only path that ships WdfDriverStub.lib
+      # AND the KMDF Visual Studio integration files
+      # (Microsoft.Windows.WDK.x64 NuGet does NOT — that is why the NuGet-based
+      # build fails with unresolved WdfFunctions_01015 / WdfDriverGlobals.)
+      - name: Install WDK (choco)
+        shell: pwsh
+        run: |
+          choco install windows-driver-kit-10 `
+               --version=10.0.26100.2454 `
+               -y --no-progress --ignore-checksums
+
+          $kitsRoot = "C:\Program Files (x86)\Windows Kits\10"
+          $deadline = (Get-Date).AddMinutes(6)
+          while (-not (Test-Path "$kitsRoot\Include\10.0.26100.0\km\ntddk.h")) {
+            if ((Get-Date) -gt $deadline) { Write-Error "WDK install timeout"; exit 1 }
+            Start-Sleep -Seconds 10
+          }
+          Write-Host "[OK] WDK ready at $kitsRoot"
+
+      # Sanity: the two files whose absence caused the LNK2019.
+      - name: Preflight — verify KMDF stub lib exists
+        shell: pwsh
+        run: |
+          $kits = "C:\Program Files (x86)\Windows Kits\10"
+          $stub = Get-ChildItem "$kits\Lib" -Recurse -Filter "WdfDriverStub.lib" `
+                  -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -match "\\1\.15\\.*\\x64\\" } |
+                  Select-Object -First 1
+          if (-not $stub) {
+            Write-Host "[!] KMDF 1.15 stub not found. Available stubs:"
+            Get-ChildItem "$kits\Lib" -Recurse -Filter "WdfDriverStub.lib" |
+              ForEach-Object { Write-Host "    $($_.FullName)" }
+            Write-Error "WdfDriverStub.lib for KMDF 1.15 x64 is missing — check vcxproj KMDFVersionMinor"
+            exit 1
+          }
+          Write-Host "[OK] KMDF stub: $($stub.FullName)"
+
+          $props = "$kits\build\WindowsDriver.KMDF.props"
+          if (-not (Test-Path $props)) {
+            Write-Error "WindowsDriver.KMDF.props missing — WDK VS integration not installed"
+            exit 1
+          }
+          Write-Host "[OK] KMDF props present"
+
+      - name: Build kernel driver (MSBuild)
+        shell: pwsh
+        working-directory: driver
+        run: |
+          msbuild RecoilDriver.vcxproj `
+            /nologo `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:SignMode=Off `
+            /p:DriverCFlagAddOn="/wd4324 /wd4201" `
+            /verbosity:minimal `
+            /m
+          if ($LASTEXITCODE -ne 0) { Write-Error "MSBuild failed"; exit 1 }
+
+      - name: Locate build output
+        shell: pwsh
+        run: |
+          $sys = Get-ChildItem -Recurse -Filter "recoil.sys" |
+                 Select-Object -First 1
+          if (-not $sys) { Write-Error "recoil.sys not produced"; exit 1 }
+          Write-Host "[OK] recoil.sys — $($sys.Length) bytes at $($sys.FullName)"
+          # Copy to a stable location for the upload step.
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item $sys.FullName artifact\recoil.sys
+          Copy-Item driver\install.bat   artifact\install.bat   -ErrorAction SilentlyContinue
+          Copy-Item driver\uninstall.bat artifact\uninstall.bat -ErrorAction SilentlyContinue
+          Copy-Item driver\driver.inf    artifact\driver.inf    -ErrorAction SilentlyContinue
+
+      - name: Upload driver artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecoilDriver-sys
+          path: artifact/*

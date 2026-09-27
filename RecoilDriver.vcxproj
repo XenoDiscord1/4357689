@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{AABBCCDD-1234-5678-ABCD-DEADBEEF0001}</ProjectGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>15.0</MinimumVisualStudioVersion>
+    <Configuration>Release</Configuration>
+    <Platform>x64</Platform>
+    <ProjectName>RecoilDriver</ProjectName>
+    <RootNamespace>RecoilDriver</RootNamespace>
+    <WDKContentRoot>$(Registry:HKEY_LOCAL_MACHINE\Software\Microsoft\Windows Kits\Installed Roots@KitsRoot10)</WDKContentRoot>
+  </PropertyGroup>
+
+  <Import Project="$(WDKContentRoot)build\WindowsDriver.Default.props" />
+
+  <PropertyGroup>
+    <!-- KMDF, not WDM. The code calls WdfDriverCreate. -->
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <Platform>x64</Platform>
+    <TargetOsVersion>10.0</TargetOsVersion>
+    <TargetPlatform>Desktop</TargetPlatform>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WppEnabled>false</WppEnabled>
+    <SpectreMitigation>false</SpectreMitigation>
+    <OutDir>$(SolutionDir)bin\Release\</OutDir>
+    <IntDir>$(SolutionDir)obj\$(ProjectName)\</IntDir>
+    <TargetName>recoil</TargetName>
+    <TargetExt>.sys</TargetExt>
+  </PropertyGroup>
+
+  <!-- Force KMDF 1.15 to match what installed WDK ships. WindowsDriver.KMDF.props
+       reads these and links the correct WdfDriverStub.lib automatically. -->
+  <PropertyGroup>
+    <KMDFVersionMajor>1</KMDFVersionMajor>
+    <KMDFVersionMinor>15</KMDFVersionMinor>
+  </PropertyGroup>
+
+  <Import Project="$(WDKContentRoot)build\WindowsDriver.props" />
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>
+        $(SolutionDir)usermode;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>
+        _AMD64_;NDEBUG;_KERNEL_MODE;
+        %(PreprocessorDefinitions)
+      </PreprocessorDefinitions>
+      <Optimization>MaxSpeed</Optimization>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <DisableSpecificWarnings>4324;4201;4055</DisableSpecificWarnings>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <!-- KMDF stub, buffer overflow lib, and the mouse class helpers.
+           WindowsDriver.KMDF.targets already adds WdfDriverStub.lib +
+           WdfLdr.lib via the KMDFVersion* pair above, so no need to
+           list them here. Just the extras we consume. -->
+      <AdditionalDependencies>
+        wdmsec.lib;wmilib.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <Driver>true</Driver>
+      <EntryPointSymbol>FxDriverEntry</EntryPointSymbol>
+      <BaseAddress>0x10000</BaseAddress>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+    </Link>
+    <Inf>
+      <TimeStampFile></TimeStampFile>
+    </Inf>
+    <!-- No test-signing in CI. The .sys is unsigned; sign it downstream. -->
+    <DriverSign>
+      <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
+    </DriverSign>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="driver.c" />
+    <ClCompile Include="evasion.c" />
+    <ClCompile Include="mouse_filter.c" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="driver.h" />
+    <ClInclude Include="..\usermode\driver_shared.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Inf Include="driver.inf" />
+  </ItemGroup>
+
+  <Import Project="$(WDKContentRoot)build\WindowsDriver.targets" />
+
+</Project>
